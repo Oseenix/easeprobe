@@ -1,9 +1,13 @@
 apihealth:
-  - name: Swellmap API
+  - name: Ripple API
     url: ${API_HEALTH_URL}
     max_age: 8h
     timeout: 15s
     interval: 2m
+    alert:
+      strategy: regular
+      factor: 720
+      max: 10
     channels:
       - email-alerts
 
@@ -14,6 +18,8 @@ notify:
       username: zhouchintse@gmail.com
       password: "${GMAIL_APP_PASSWORD}"
       to: "jerry@orcas-coastal.com;dougal@orcas-coastal.com"
+      channels:
+        - email-alerts
 
 settings:
   probe:

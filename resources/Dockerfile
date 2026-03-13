@@ -1,4 +1,4 @@
-FROM golang:1.21-alpine as builder
+FROM golang:1.24-alpine AS builder
 WORKDIR /go/src/github.com/megaease/easeprobe/
 COPY ./ /go/src/github.com/megaease/easeprobe/
 RUN --mount=type=cache,target=/var/cache/apk \

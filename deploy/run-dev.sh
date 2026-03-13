@@ -12,6 +12,6 @@ fi
 
 GMAIL_APP_PASSWORD="$(cat "$PWD_FILE" | tr -d '[:space:]')"
 export GMAIL_APP_PASSWORD
-export API_HEALTH_URL="https://dev.your-domain.com/api/health"
+export API_HEALTH_URL="http://192.168.1.28:8088/api/health"
 
 exec easeprobe -f "${SCRIPT_DIR}/../config.yaml"
