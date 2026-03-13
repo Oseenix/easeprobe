@@ -1,0 +1,10 @@
+services:
+  easeprobe:
+    build:
+      context: ../
+      dockerfile: resources/Dockerfile
+    env_file:
+      - .env.${ENV:-dev}
+    volumes:
+      - ../config.yaml:/opt/config.yaml:ro
+    restart: unless-stopped
