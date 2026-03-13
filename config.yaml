@@ -1,0 +1,21 @@
+apihealth:
+  - name: Swellmap API
+    url: ${API_HEALTH_URL}
+    max_age: 8h
+    timeout: 15s
+    interval: 2m
+    channels:
+      - email-alerts
+
+notify:
+  email:
+    - name: email-alerts
+      server: smtp.gmail.com:587
+      username: zhouchintse@gmail.com
+      password: "${GMAIL_APP_PASSWORD}"
+      to: "jerry@orcas-coastal.com;dougal@orcas-coastal.com"
+
+settings:
+  probe:
+    timeout: 30s
+    interval: 2m

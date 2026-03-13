@@ -35,6 +35,7 @@ import (
 	"github.com/megaease/easeprobe/global"
 	"github.com/megaease/easeprobe/notify"
 	"github.com/megaease/easeprobe/probe"
+	"github.com/megaease/easeprobe/probe/apihealth"
 	"github.com/megaease/easeprobe/probe/client"
 	"github.com/megaease/easeprobe/probe/host"
 	"github.com/megaease/easeprobe/probe/http"
@@ -141,6 +142,7 @@ type Settings struct {
 type Conf struct {
 	Version   string                `yaml:"version" json:"version,omitempty" jsonschema:"title=Version,description=Version of the EaseProbe configuration"`
 	HTTP      []http.HTTP           `yaml:"http" json:"http,omitempty" jsonschema:"title=HTTP Probe,description=HTTP Probe Configuration"`
+	APIHealth []apihealth.APIHealth `yaml:"apihealth" json:"apihealth,omitempty" jsonschema:"title=API Health Probe,description=API Health Probe Configuration"`
 	TCP       []tcp.TCP             `yaml:"tcp" json:"tcp,omitempty" jsonschema:"title=TCP Probe,description=TCP Probe Configuration"`
 	Shell     []shell.Shell         `yaml:"shell" json:"shell,omitempty" jsonschema:"title=Shell Probe,description=Shell Probe Configuration"`
 	Client    []client.Client       `yaml:"client" json:"client,omitempty" jsonschema:"title=Native Client Probe,description=Native Client Probe Configuration"`
@@ -291,10 +293,11 @@ func IsConfigModified(path string) bool {
 // New read the configuration from yaml
 func New(conf *string) (*Conf, error) {
 	c := Conf{
-		HTTP:   []http.HTTP{},
-		TCP:    []tcp.TCP{},
-		Shell:  []shell.Shell{},
-		Client: []client.Client{},
+		HTTP:      []http.HTTP{},
+		APIHealth: []apihealth.APIHealth{},
+		TCP:       []tcp.TCP{},
+		Shell:     []shell.Shell{},
+		Client:    []client.Client{},
 		SSH: ssh.SSH{
 			Bastion: &ssh.BastionMap,
 			Servers: []ssh.Server{},
