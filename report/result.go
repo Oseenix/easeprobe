@@ -22,6 +22,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/megaease/easeprobe/global"
@@ -131,8 +132,9 @@ func ToHTML(r probe.Result) string {
 		` + HTMLFooter(FormatTime(r.StartTime))
 
 	rtt := r.RoundTripTime.Round(time.Millisecond)
+	msg := strings.ReplaceAll(r.Message, "\n", "<br>")
 	return fmt.Sprintf(html, r.Name, r.Endpoint, r.Status.Emoji(), r.Status.String(),
-		FormatTime(r.StartTime), rtt, r.Message)
+		FormatTime(r.StartTime), rtt, msg)
 }
 
 // ToMarkdown convert the object to ToMarkdown

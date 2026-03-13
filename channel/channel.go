@@ -146,13 +146,6 @@ func (c *Channel) WatchEvent(wg *sync.WaitGroup) {
 			log.Infof("[%s / %s]: Received the done signal, channel exiting...", kind, c.Name)
 			return
 		case result := <-c.channel:
-			// if it is the first time, and the status is UP, no need notify
-			if result.PreStatus == probe.StatusInit && result.Status == probe.StatusUp {
-				log.Debugf("[%s / %s]: %s (%s) - Initial Status [%s] == [%s], no notification.",
-					kind, c.Name, result.Name, result.Endpoint, result.PreStatus, result.Status)
-				continue
-			}
-
 			// if the status has no change for UP or Init, no need notify
 			if result.PreStatus == result.Status && (result.Status == probe.StatusUp || result.Status == probe.StatusInit) {
 				log.Debugf("[%s / %s]: %s (%s) - Status no change [%s] == [%s], no notification.",

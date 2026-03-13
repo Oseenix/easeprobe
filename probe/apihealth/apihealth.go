@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -94,68 +95,161 @@ func (a *APIHealth) DoProbe() (bool, string) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Sprintf("HTTP status %d, expected 200", resp.StatusCode)
+		return false, fmt.Sprintf("HTTP %d (expected 200)", resp.StatusCode)
 	}
 
 	var health healthResponse
 	if err := json.Unmarshal(body, &health); err != nil {
-		return false, fmt.Sprintf("Failed to parse JSON: %v", err)
+		return false, fmt.Sprintf("Invalid JSON: %v", err)
 	}
 
-	var errors []string
+	var issues []string
 
 	if health.Status != "ok" {
-		errors = append(errors, fmt.Sprintf("status=%q, expected \"ok\"", health.Status))
+		issues = append(issues, fmt.Sprintf("status=%q (expected \"ok\")", health.Status))
 	}
 	if !health.DatasourceStatus.Enabled {
-		errors = append(errors, "datasource not enabled")
+		issues = append(issues, "datasource not enabled")
 	}
 
 	now := time.Now().UTC()
-
-	for tile, dateHour := range health.DatasourceStatus.TileDetails {
-		if err := a.checkFreshness(now, dateHour, fmt.Sprintf("tile_details[%s]", tile)); err != nil {
-			errors = append(errors, err.Error())
-		}
+	if msg := a.checkAllFreshness(now, &health.DatasourceStatus); msg != "" {
+		issues = append(issues, msg)
 	}
 
-	if len(health.DatasourceStatus.GeojsonDateHours) > 0 {
-		latest := health.DatasourceStatus.GeojsonDateHours[0]
-		if err := a.checkFreshness(now, latest, "geojson_date_hours"); err != nil {
-			errors = append(errors, err.Error())
-		}
-	} else {
-		errors = append(errors, "geojson_date_hours is empty")
+	if len(issues) > 0 {
+		return false, strings.Join(issues, "; ")
 	}
-
-	for model, hours := range health.DatasourceStatus.ForecastDetails {
-		if len(hours) > 0 {
-			if err := a.checkFreshness(now, hours[0], fmt.Sprintf("forecast[%s]", model)); err != nil {
-				errors = append(errors, err.Error())
-			}
-		} else {
-			errors = append(errors, fmt.Sprintf("forecast[%s] is empty", model))
-		}
-	}
-
-	if len(errors) > 0 {
-		return false, strings.Join(errors, "; ")
-	}
-
-	return true, "API health check passed"
+	return true, "All checks passed"
 }
 
-// checkFreshness verifies a date_hour string is within MaxAge of now.
-func (a *APIHealth) checkFreshness(now time.Time, dateHour, label string) error {
-	t, err := parseDateHour(dateHour)
-	if err != nil {
-		return fmt.Errorf("%s: invalid date_hour %q: %v", label, dateHour, err)
+type staleGroup struct {
+	category string
+	items    []string
+	dateHour string
+	age      time.Duration
+}
+
+func (a *APIHealth) checkAllFreshness(now time.Time, ds *datasourceStatus) string {
+	var groups []staleGroup
+	var missing []string
+	var badFormat []string
+
+	if len(ds.TileDetails) == 0 {
+		missing = append(missing, "tiles")
+	} else {
+		var names []string
+		var dh string
+		var elapsed time.Duration
+		for tile, dateHour := range ds.TileDetails {
+			t, err := parseDateHour(dateHour)
+			if err != nil {
+				badFormat = append(badFormat, fmt.Sprintf("tile[%s]=%q", tile, dateHour))
+				continue
+			}
+			elapsed = now.Sub(t)
+			if elapsed > a.MaxAge {
+				names = append(names, tile)
+				dh = dateHour
+			}
+		}
+		if len(names) > 0 {
+			sort.Strings(names)
+			groups = append(groups, staleGroup{"tiles", names, dh, elapsed})
+		}
 	}
-	age := now.Sub(t)
-	if age > a.MaxAge {
-		return fmt.Errorf("%s: %s is %s old (max %s)", label, dateHour, age.Round(time.Minute), a.MaxAge)
+
+	if len(ds.GeojsonDateHours) == 0 {
+		missing = append(missing, "geojson")
+	} else {
+		latest := ds.GeojsonDateHours[0]
+		t, err := parseDateHour(latest)
+		if err != nil {
+			badFormat = append(badFormat, fmt.Sprintf("geojson=%q", latest))
+		} else if elapsed := now.Sub(t); elapsed > a.MaxAge {
+			groups = append(groups, staleGroup{"geojson", nil, latest, elapsed})
+		}
 	}
-	return nil
+
+	if len(ds.ForecastDetails) == 0 {
+		missing = append(missing, "forecast")
+	} else {
+		var names []string
+		var dh string
+		var elapsed time.Duration
+		for model, hours := range ds.ForecastDetails {
+			if len(hours) == 0 {
+				missing = append(missing, fmt.Sprintf("forecast[%s]", model))
+				continue
+			}
+			t, err := parseDateHour(hours[0])
+			if err != nil {
+				badFormat = append(badFormat, fmt.Sprintf("forecast[%s]=%q", model, hours[0]))
+				continue
+			}
+			elapsed = now.Sub(t)
+			if elapsed > a.MaxAge {
+				names = append(names, model)
+				dh = hours[0]
+			}
+		}
+		if len(names) > 0 {
+			sort.Strings(names)
+			groups = append(groups, staleGroup{"forecast", names, dh, elapsed})
+		}
+	}
+
+	var lines []string
+
+	if len(groups) > 0 {
+		allSameDH := true
+		for _, g := range groups[1:] {
+			if g.dateHour != groups[0].dateHour {
+				allSameDH = false
+				break
+			}
+		}
+
+		if allSameDH {
+			lines = append(lines, fmt.Sprintf("Stale data (max %s) — %s (%s old)",
+				fmtDuration(a.MaxAge), groups[0].dateHour, fmtDuration(groups[0].age)))
+			for _, g := range groups {
+				lines = append(lines, "- "+formatGroupLabel(g))
+			}
+		} else {
+			lines = append(lines, fmt.Sprintf("Stale data (max %s)", fmtDuration(a.MaxAge)))
+			for _, g := range groups {
+				lines = append(lines, fmt.Sprintf("- %s @ %s (%s old)",
+					formatGroupLabel(g), g.dateHour, fmtDuration(g.age)))
+			}
+		}
+	}
+
+	if len(missing) > 0 {
+		lines = append(lines, "Missing: "+strings.Join(missing, ", "))
+	}
+	if len(badFormat) > 0 {
+		lines = append(lines, "Bad format: "+strings.Join(badFormat, ", "))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func formatGroupLabel(g staleGroup) string {
+	if len(g.items) == 0 {
+		return g.category
+	}
+	return fmt.Sprintf("%s[%s]", g.category, strings.Join(g.items, ", "))
+}
+
+func fmtDuration(d time.Duration) string {
+	d = d.Round(time.Minute)
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	if m == 0 {
+		return fmt.Sprintf("%dh", h)
+	}
+	return fmt.Sprintf("%dh%dm", h, m)
 }
 
 // parseDateHour parses a date_hour string like "20260312_18" into a UTC time.
