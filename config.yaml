@@ -1,7 +1,7 @@
 apihealth:
   - name: Ripple API
     url: ${API_HEALTH_URL}
-    max_age: 8h
+    max_age: 12h
     timeout: 15s
     interval: 2m
     alert:
