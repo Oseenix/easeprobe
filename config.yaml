@@ -25,3 +25,8 @@ settings:
   probe:
     timeout: 30s
     interval: 2m
+  sla:
+    schedule: weekly
+    time: "00:00"
+    channels:
+      - email-alerts
