@@ -57,7 +57,7 @@ jobs:
             docker run -d \
               --name easeprobe \
               --restart unless-stopped \
-              -e API_HEALTH_URL=${{ secrets.API_HEALTH_URL }} \
-              -e GMAIL_APP_PASSWORD=${{ secrets.GMAIL_APP_PASSWORD }} \
+              -e API_HEALTH_URL="${{ secrets.API_HEALTH_URL }}" \
+              -e GMAIL_APP_PASSWORD="${{ secrets.GMAIL_APP_PASSWORD }}" \
               -v /opt/easeprobe/config.yaml:/opt/config.yaml:ro \
               ${{ env.IMAGE }}:${{ github.sha }}
