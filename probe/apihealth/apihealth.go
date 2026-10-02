@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -142,7 +143,7 @@ func (a *APIHealth) checkAllFreshness(now time.Time, ds *datasourceStatus) strin
 		var dh string
 		var elapsed time.Duration
 		for tile, dateHour := range ds.TileDetails {
-			t, err := parseDateHour(dateHour)
+			t, err := parseTileDetail(dateHour)
 			if err != nil {
 				badFormat = append(badFormat, fmt.Sprintf("tile[%s]=%q", tile, dateHour))
 				continue
@@ -255,4 +256,39 @@ func fmtDuration(d time.Duration) string {
 // parseDateHour parses a date_hour string like "20260312_18" into a UTC time.
 func parseDateHour(s string) (time.Time, error) {
 	return time.ParseInLocation("20060102_15", s, time.UTC)
+}
+
+// tileDetailEntryRe matches one "dateHour" or "dateHour(modelId)" entry.
+var tileDetailEntryRe = regexp.MustCompile(`^(\d{8}_\d{2})(?:\([^)]*\))?$`)
+
+// parseTileDetail parses a tile_details value, which may be a bare
+// "20260312_18" or wave-web's v4.0 multi-model format with comma-separated
+// "dateHour(modelId)" entries, e.g. "20260312_18(nz),20260312_12(au_east)".
+// It returns the oldest (most stale) timestamp among the entries, since a
+// tile is only as fresh as its stalest contributing model.
+func parseTileDetail(s string) (time.Time, error) {
+	var oldest time.Time
+	found := false
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		m := tileDetailEntryRe.FindStringSubmatch(part)
+		if m == nil {
+			return time.Time{}, fmt.Errorf("unrecognized tile_details entry %q", part)
+		}
+		t, err := parseDateHour(m[1])
+		if err != nil {
+			return time.Time{}, err
+		}
+		if !found || t.Before(oldest) {
+			oldest = t
+			found = true
+		}
+	}
+	if !found {
+		return time.Time{}, fmt.Errorf("empty tile_details value")
+	}
+	return oldest, nil
 }
