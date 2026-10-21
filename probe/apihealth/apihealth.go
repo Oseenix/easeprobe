@@ -46,6 +46,10 @@ type APIHealth struct {
 type healthResponse struct {
 	Status           string           `json:"status"`
 	DatasourceStatus datasourceStatus `json:"datasource_status"`
+	DataSource       struct {
+		ForecastPrimary string `json:"forecast_primary"`
+	} `json:"data_source"`
+	TileDB *tileDBStatus `json:"tiledb"`
 }
 
 // datasourceStatus is the datasource status part of the health response.
@@ -59,6 +63,20 @@ type datasourceStatus struct {
 	TileDetails      map[string]string   `json:"tile_details"`
 	GeojsonDateHours []string            `json:"geojson_date_hours"`
 	ForecastDetails  map[string][]string `json:"forecast_details"`
+}
+
+type tileDBStatus struct {
+	Ready bool              `json:"ready"`
+	URIs  map[string]string `json:"uris"`
+	Sync  struct {
+		Categories map[string]tileDBCategory `json:"categories"`
+	} `json:"sync"`
+}
+
+type tileDBCategory struct {
+	Synced         bool   `json:"synced"`
+	LocalArrayPath string `json:"localArrayPath"`
+	UpdatedAt      string `json:"updatedAt"`
 }
 
 // Config configures the API Health probe.
@@ -114,8 +132,12 @@ func (a *APIHealth) DoProbe() (bool, string) {
 	}
 
 	now := time.Now().UTC()
-	if msg := a.checkAllFreshness(now, &health.DatasourceStatus); msg != "" {
+	tileDBForecast := health.DataSource.ForecastPrimary == "tiledb"
+	if msg := a.checkAllFreshness(now, &health.DatasourceStatus, tileDBForecast); msg != "" {
 		issues = append(issues, msg)
+	}
+	if tileDBForecast {
+		issues = append(issues, a.checkTileDBForecast(now, health.TileDB)...)
 	}
 
 	if len(issues) > 0 {
@@ -131,7 +153,7 @@ type staleGroup struct {
 	age      time.Duration
 }
 
-func (a *APIHealth) checkAllFreshness(now time.Time, ds *datasourceStatus) string {
+func (a *APIHealth) checkAllFreshness(now time.Time, ds *datasourceStatus, tileDBForecast bool) string {
 	var groups []staleGroup
 	var missing []string
 	var badFormat []string
@@ -172,9 +194,9 @@ func (a *APIHealth) checkAllFreshness(now time.Time, ds *datasourceStatus) strin
 		}
 	}
 
-	if len(ds.ForecastDetails) == 0 {
+	if !tileDBForecast && len(ds.ForecastDetails) == 0 {
 		missing = append(missing, "forecast")
-	} else {
+	} else if !tileDBForecast {
 		var names []string
 		var dh string
 		var elapsed time.Duration
@@ -234,6 +256,42 @@ func (a *APIHealth) checkAllFreshness(now time.Time, ds *datasourceStatus) strin
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func (a *APIHealth) checkTileDBForecast(now time.Time, status *tileDBStatus) []string {
+	if status == nil {
+		return []string{"Missing: tiledb"}
+	}
+	var issues []string
+	if !status.Ready {
+		issues = append(issues, "tiledb not ready")
+	}
+	for _, category := range []string{"surf", "boat"} {
+		label := "forecast[" + category + "]"
+		state, ok := status.Sync.Categories[category]
+		if !ok {
+			issues = append(issues, "Missing: "+label)
+			continue
+		}
+		if !state.Synced {
+			issues = append(issues, label+" not synced")
+		}
+		if strings.TrimSpace(status.URIs[category]) == "" || strings.TrimSpace(state.LocalArrayPath) == "" {
+			issues = append(issues, "Missing: "+label+" array path")
+		}
+		if state.UpdatedAt == "" {
+			issues = append(issues, "Missing: "+label+" updatedAt")
+			continue
+		}
+		updatedAt, err := time.Parse(time.RFC3339Nano, state.UpdatedAt)
+		if err != nil {
+			issues = append(issues, fmt.Sprintf("Bad format: %s updatedAt=%q", label, state.UpdatedAt))
+		} else if age := now.Sub(updatedAt); age > a.MaxAge {
+			issues = append(issues, fmt.Sprintf("Stale data (max %s) — %s @ %s (%s old)",
+				fmtDuration(a.MaxAge), label, state.UpdatedAt, fmtDuration(age)))
+		}
+	}
+	return issues
 }
 
 func formatGroupLabel(g staleGroup) string {

@@ -1,6 +1,9 @@
 apihealth:
   - name: Ripple API
     url: ${API_HEALTH_URL}
+    # Freshness limit for tiles, geojson, and the active forecast backend.
+    # TileDB forecasts require ready/synced surf and boat arrays with updatedAt
+    # within max_age; other backends use datasource_status.forecast_details.
     max_age: 15h
     timeout: 15s
     interval: 2m

@@ -18,9 +18,13 @@
 package apihealth
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/megaease/easeprobe/global"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -50,4 +54,105 @@ func TestParseTileDetailBadFormat(t *testing.T) {
 func TestParseTileDetailEmpty(t *testing.T) {
 	_, err := parseTileDetail("")
 	assert.Error(t, err)
+}
+
+func TestDoProbeForecastSources(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(map[string]interface{})
+		want   string
+	}{
+		{name: "TileDB without legacy forecasts"},
+		{name: "missing TileDB", change: func(h map[string]interface{}) { delete(h, "tiledb") }, want: "Missing: tiledb"},
+		{name: "TileDB not ready", change: func(h map[string]interface{}) {
+			h["tiledb"].(map[string]interface{})["ready"] = false
+		}, want: "tiledb not ready"},
+		{name: "missing boat", change: func(h map[string]interface{}) {
+			delete(h["tiledb"].(map[string]interface{})["sync"].(map[string]interface{})["categories"].(map[string]interface{}), "boat")
+		}, want: "Missing: forecast[boat]"},
+		{name: "unsynced boat", change: func(h map[string]interface{}) {
+			forecastCategory(h, "boat")["synced"] = false
+		}, want: "forecast[boat] not synced"},
+		{name: "missing array path", change: func(h map[string]interface{}) {
+			forecastCategory(h, "surf")["localArrayPath"] = ""
+		}, want: "Missing: forecast[surf] array path"},
+		{name: "missing active URI", change: func(h map[string]interface{}) {
+			delete(h["tiledb"].(map[string]interface{})["uris"].(map[string]interface{}), "surf")
+		}, want: "Missing: forecast[surf] array path"},
+		{name: "missing timestamp", change: func(h map[string]interface{}) {
+			delete(forecastCategory(h, "surf"), "updatedAt")
+		}, want: "Missing: forecast[surf] updatedAt"},
+		{name: "invalid timestamp", change: func(h map[string]interface{}) {
+			forecastCategory(h, "surf")["updatedAt"] = "invalid"
+		}, want: "Bad format: forecast[surf]"},
+		{name: "stale despite server freshness flag", change: func(h map[string]interface{}) {
+			forecastCategory(h, "boat")["updatedAt"] = time.Now().UTC().Add(-16 * time.Hour).Format(time.RFC3339Nano)
+			h["forecast_freshness"] = map[string]interface{}{"boat": map[string]interface{}{"stale": false}}
+		}, want: "Stale data (max 15h)"},
+		{name: "legacy missing forecast", change: func(h map[string]interface{}) {
+			delete(h, "data_source")
+		}, want: "Missing: forecast"},
+		{name: "legacy valid forecast", change: func(h map[string]interface{}) {
+			delete(h, "data_source")
+			delete(h, "tiledb")
+			h["datasource_status"].(map[string]interface{})["forecast_details"] = map[string][]string{
+				"wave": {time.Now().UTC().Format("20060102_15")},
+			}
+		}},
+		{name: "legacy stale forecast", change: func(h map[string]interface{}) {
+			h["data_source"] = map[string]string{"forecast_primary": "postgres"}
+			h["datasource_status"].(map[string]interface{})["forecast_details"] = map[string][]string{
+				"wave": {time.Now().UTC().Add(-16 * time.Hour).Format("20060102_15")},
+			}
+		}, want: "Stale data (max 15h)"},
+		{name: "TileDB does not hide missing tiles", change: func(h map[string]interface{}) {
+			delete(h["datasource_status"].(map[string]interface{}), "tile_details")
+		}, want: "Missing: tiles"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now().UTC()
+			h := map[string]interface{}{
+				"status":      "ok",
+				"data_source": map[string]string{"forecast_primary": "tiledb"},
+				"datasource_status": map[string]interface{}{
+					"enabled": true, "ready": true,
+					"tile_details":       map[string]string{"wave": now.Format("20060102_15")},
+					"geojson_date_hours": []string{now.Format("20060102_15")},
+					"forecast_details":   map[string][]string{},
+				},
+				"tiledb": map[string]interface{}{
+					"ready": true,
+					"uris":  map[string]interface{}{"surf": "/surf.tdb", "boat": "/boat.tdb"},
+					"sync": map[string]interface{}{"categories": map[string]interface{}{
+						"surf": map[string]interface{}{"synced": true, "localArrayPath": "/surf.tdb", "updatedAt": now.Format(time.RFC3339Nano)},
+						"boat": map[string]interface{}{"synced": true, "localArrayPath": "/boat.tdb", "updatedAt": now.Format(time.RFC3339Nano)},
+					}},
+				},
+			}
+			if tc.change != nil {
+				tc.change(h)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if err := json.NewEncoder(w).Encode(h); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			p := APIHealth{URL: server.URL, MaxAge: 15 * time.Hour}
+			if !assert.NoError(t, p.Config(global.ProbeSettings{Timeout: time.Second})) {
+				return
+			}
+			ok, message := p.DoProbe()
+			assert.Equal(t, tc.want == "", ok, message)
+			if tc.want == "" {
+				assert.Equal(t, "All checks passed", message)
+			} else {
+				assert.Contains(t, message, tc.want)
+			}
+		})
+	}
+}
+
+func forecastCategory(h map[string]interface{}, category string) map[string]interface{} {
+	return h["tiledb"].(map[string]interface{})["sync"].(map[string]interface{})["categories"].(map[string]interface{})[category].(map[string]interface{})
 }
