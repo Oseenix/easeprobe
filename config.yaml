@@ -4,6 +4,8 @@ apihealth:
     # Freshness limit for tiles, geojson, and the active forecast backend.
     # TileDB forecasts require ready/synced surf and boat arrays with updatedAt
     # within max_age; other backends use datasource_status.forecast_details.
+    # Check the latest tile run per model, not retained historical runs.
+    # Every contributing model must have a latest run within max_age.
     max_age: 15h
     timeout: 15s
     interval: 2m
