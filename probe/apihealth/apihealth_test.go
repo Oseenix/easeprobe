@@ -153,6 +153,54 @@ func TestDoProbeForecastSources(t *testing.T) {
 	}
 }
 
+func TestTileFreshnessWithRetainedHistory(t *testing.T) {
+	now := time.Date(2026, 11, 16, 19, 34, 0, 0, time.UTC)
+	probe := APIHealth{MaxAge: 15 * time.Hour}
+	for _, tc := range []struct {
+		name    string
+		details string
+		stale   bool
+	}{
+		{
+			name:    "single model with retained history",
+			details: "20261116_12(wind),20261116_06(wind),20261116_00(wind),20261114_00(wind)",
+		},
+		{
+			name:    "unsorted history for multiple models",
+			details: "20261114_00(nz),20261116_06(au_east),20261116_12(nz),20261114_00(au_east)",
+		},
+		{
+			name:    "bare dates with retained history",
+			details: "20261114_00,20261116_12,20261116_06",
+		},
+		{
+			name:    "fresh model cannot hide stalled model",
+			details: "20261116_12(nz),20261114_00(au_east),20261114_00(nz)",
+			stale:   true,
+		},
+		{
+			name:    "all models stalled",
+			details: "20261114_00(nz),20261114_06(nz),20261114_00(au_east)",
+			stale:   true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ds := datasourceStatus{
+				TileDetails:      map[string]string{"wave:hsig": tc.details},
+				GeojsonDateHours: []string{"20261116_12"},
+				ForecastDetails:  map[string][]string{"nz": {"20261116_12"}},
+			}
+			msg := probe.checkAllFreshness(now, &ds, false)
+			if tc.stale {
+				assert.Contains(t, msg, "tiles[wave:hsig]")
+				assert.Contains(t, msg, "Stale data")
+			} else {
+				assert.Empty(t, msg)
+			}
+		})
+	}
+}
+
 func forecastCategory(h map[string]interface{}, category string) map[string]interface{} {
 	return h["tiledb"].(map[string]interface{})["sync"].(map[string]interface{})["categories"].(map[string]interface{})[category].(map[string]interface{})
 }

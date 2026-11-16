@@ -317,16 +317,15 @@ func parseDateHour(s string) (time.Time, error) {
 }
 
 // tileDetailEntryRe matches one "dateHour" or "dateHour(modelId)" entry.
-var tileDetailEntryRe = regexp.MustCompile(`^(\d{8}_\d{2})(?:\([^)]*\))?$`)
+var tileDetailEntryRe = regexp.MustCompile(`^(\d{8}_\d{2})(?:\(([^)]*)\))?$`)
 
 // parseTileDetail parses a tile_details value, which may be a bare
 // "20260312_18" or wave-web's v4.0 multi-model format with comma-separated
 // "dateHour(modelId)" entries, e.g. "20260312_18(nz),20260312_12(au_east)".
-// It returns the oldest (most stale) timestamp among the entries, since a
-// tile is only as fresh as its stalest contributing model.
+// It ignores retained history by selecting the latest timestamp per model,
+// then returns the oldest of those timestamps so a stalled model still fails.
 func parseTileDetail(s string) (time.Time, error) {
-	var oldest time.Time
-	found := false
+	latestByModel := make(map[string]time.Time)
 	for _, part := range strings.Split(s, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
@@ -340,13 +339,19 @@ func parseTileDetail(s string) (time.Time, error) {
 		if err != nil {
 			return time.Time{}, err
 		}
-		if !found || t.Before(oldest) {
-			oldest = t
-			found = true
+		model := m[2]
+		if latest, ok := latestByModel[model]; !ok || t.After(latest) {
+			latestByModel[model] = t
 		}
 	}
-	if !found {
+	if len(latestByModel) == 0 {
 		return time.Time{}, fmt.Errorf("empty tile_details value")
+	}
+	var oldest time.Time
+	for _, latest := range latestByModel {
+		if oldest.IsZero() || latest.Before(oldest) {
+			oldest = latest
+		}
 	}
 	return oldest, nil
 }
