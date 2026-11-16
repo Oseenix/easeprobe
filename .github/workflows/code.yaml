@@ -8,7 +8,7 @@ on:
       - "**/*.go"
       - "go.mod"
       - "go.sum"
-      - ".github/workflows/code.yml"
+      - ".github/workflows/code.yaml"
 
 jobs:
   lint:
@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo chown -R root $GITHUB_WORKSPACE
       - name: Spelling Check
-        uses: reviewdog/action-misspell@v1.27.0
+        uses: reviewdog/action-misspell@v1.31.0
       - name: Revive Action
         uses: morphy2k/revive-action@v2
       - name: "Restore Permissions"
