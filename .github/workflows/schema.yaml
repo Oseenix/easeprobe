@@ -12,11 +12,13 @@ jobs:
     schema:
       name: JSON Schema
       runs-on: ubuntu-latest
+      # Use the repository's automatic token; no upstream-only bot secret is needed.
+      # Write access is scoped to this job so it can commit resources/schema.json.
+      permissions:
+        contents: write
       steps:
         - name: Checkout Source Code
           uses: actions/checkout@v6
-          with:
-            token: ${{ secrets.MEGAEASE_BOT }}
 
         - name: Setup Go Environment
           uses: actions/setup-go@v6
